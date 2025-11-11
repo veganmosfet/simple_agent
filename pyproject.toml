@@ -1,0 +1,10 @@
+[project]
+name = "simple_agent"
+version = "0.1.0"
+description = "A simple CLI / terminal based agent with bash, webfetch, readfile and MCP support."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "gnureadline>=8.2.13",
+    "openai>=2.7.1",
+]

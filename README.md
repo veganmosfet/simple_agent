@@ -81,6 +81,7 @@ Notes
 ## Requirements
 - Python >=3.12
 - `openai` Python package
+- `fastmcp` Python package
 
 ## File Overview
 - `agent.py`: main agent (single file)

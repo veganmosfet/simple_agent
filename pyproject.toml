@@ -5,6 +5,7 @@ description = "A simple CLI / terminal based agent with bash, webfetch, readfile
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastmcp>=2.13.0.2",
     "gnureadline>=8.2.13",
     "openai>=2.7.1",
 ]

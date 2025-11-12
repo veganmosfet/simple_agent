@@ -552,7 +552,7 @@ def execute_tool_call(call: Dict[str, Any], opts: argparse.Namespace, colors_on:
 
     result: Dict[str, Any]
     if dispatch_name == "bash":
-        if getattr(opts, "bash", False):
+        if not getattr(opts, "bash_enabled", False):
             result = {"error": "'bash' tool disabled"}
         else:
             result = tool_bash(
@@ -653,7 +653,7 @@ def agent_loop(opts: argparse.Namespace) -> None:
 
     tools = build_tools(
         dynamic_mcp_tools,
-        include_bash=getattr(opts, "bash", False),
+        include_bash=getattr(opts, "bash_enabled", False),
         readfile_bytes=int(getattr(opts, "readfile_bytes", 4096)),
     )
 
@@ -665,7 +665,7 @@ def agent_loop(opts: argparse.Namespace) -> None:
 
     print(colorize("Simple LLM Agent (type 'exit' to quit)", Colors.BOLD, colors_on))
     print(colorize(f"Model: {opts.model}", Colors.GREEN, colors_on))
-    native_tools = (["bash"] if getattr(opts, "bash", False) else []) + ["readfile", "webfetch"]
+    native_tools = (["bash"] if getattr(opts, "bash_enabled", False) else []) + ["readfile", "webfetch"]
     mcp_tool_names = sorted(list(mcp_tools_map.keys()))
     if mcp_tool_names:
         print(colorize(f"MCP tools: {', '.join(mcp_tool_names)}", Colors.YELLOW, colors_on))
@@ -770,7 +770,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--debug-llm", action="store_true", help="Debug raw LLM traffic (requests/responses)")
     p.add_argument("--debug-tools", action="store_true", help="Debug tool calls and I/O (incl. MCP JSON-RPC)")
     p.add_argument("--no-color", action="store_true", help="Disable ANSI colors in terminal output")
-    p.add_argument("--bash", action="store_true", help="Enable the 'bash' tool")
+    p.add_argument("--bash-enabled", action="store_true", help="Enable 'bash' tool. Security Warning!")
     # MCP
     p.add_argument("--mcp-url", default=os.getenv("MCP_URL"), help="MCP server base URL (optional)")
     p.add_argument("--mcp-token", default=os.getenv("MCP_TOKEN"), help="Bearer token for MCP server (optional)")

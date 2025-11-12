@@ -1,6 +1,6 @@
 # Simple LLM Terminal Agent
  
-This repository contains a single-file Python agent (`agent.py`) that runs in a terminal. It is compatible with OpenAI-style chat APIs, supports native tools (`bash`, `webfetch`, and `readfile`), and integrates with one MCP server over HTTP JSON‑RPC. Everything runs in the terminal with concise output and optional debug logs.
+This repository contains a single-file Python agent (`agent.py`) that runs in a terminal. It is compatible with OpenAI-style chat APIs, supports native tools (`webfetch`, `readfile`, and optional `bash`), and integrates with one MCP server over HTTP JSON‑RPC. Everything runs in the terminal with concise output and optional debug logs.
 
 **Warning** 
 This is a playground project developed to understand how agents work, not a production ready agent. Be very careful with the `bash` tool :-)

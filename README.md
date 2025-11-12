@@ -17,8 +17,8 @@ This is a playground project developed to understand how agents work, not a prod
   - `uv run agent.py --model <model> --api-base <url> --mcp-url http://127.0.0.1:3000/mcp --mcp-token TOKEN`
 
 Windows quick start
-- Without Bash installed: `py agent.py --model gpt-4o-mini --no-bash`
-- With Git Bash or WSL available: `py agent.py --model gpt-4o-mini`
+- Without Bash installed: `py agent.py --model gpt-4o-mini`
+- With Git Bash or WSL available: `py agent.py --model gpt-4o-mini --bash`
 
 Notes
 - Exit with `exit` or `Ctrl+D`.
@@ -42,14 +42,14 @@ Notes
 - `--debug-llm`: show raw LLM traffic (requests/responses)
 - `--debug`: convenience flag enabling both `--debug-tools` and `--debug-llm`
 - `--no-color`: disable colored terminal output
-- `--no-bash`: disable the `bash` tool (useful on Windows without Bash)
+- `--bash`: enable the `bash` tool (useful on Windows without Bash). Warning! Use only in sandboxed environment!
 - `--readfile-bytes <int>`: limit for `readfile` tool output (first N bytes; default 4096)
 
 ### Native Tools (exposed to the model)
 - `bash({ command })`
   - Runs a shell command and returns `{ stdout, stderr, exit_code }`
   - Defaults: `timeout=30s`, `cwd=current directory`
-  - Availability: included by default; disabled when `--no-bash` is provided.
+  - Availability: disabled by default; enabled when `--bash` is provided.
   - **WARNING** Use only in sandboxed environment!
 - `webfetch({ url })`
   - Fetches the URL and returns plain text extracted from HTML

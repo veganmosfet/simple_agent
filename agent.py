@@ -396,10 +396,10 @@ class OpenAICompat:
                 resp = self.client.chat.completions.create(**payload)
             except Exception as e:
                 msg = str(e)
-                if "Resource not found" in msg or "404" in msg:
+                if self._provider == "azure" and ("Resource not found" in msg or "404" in msg):
                     raise RuntimeError(
                         "Azure OpenAI: Resource not found. Verify endpoint (omit trailing /openai), API version, and that --model matches your deployment name."
-                    )
+                    ) from e
                 raise
             # Convert to a dict for uniform downstream handling
             return json.loads(resp.model_dump_json())

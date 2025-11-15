@@ -55,6 +55,45 @@ def colorize_prompt(text: str, color: str, using_libedit: bool, enabled: bool = 
     return f"{start_np}{color}{end_np}{text}{start_np}{Colors.RESET}{end_np}"
 
 
+def reasoning_to_text(reasoning_content: Any) -> str:
+    """Normalize reasoning_content (thinking traces) to a printable string."""
+
+    def _to_text(val: Any) -> Optional[str]:
+        if val is None:
+            return None
+        if isinstance(val, str):
+            return val
+        if isinstance(val, list):
+            parts: List[str] = []
+            for item in val:
+                t = _to_text(item)
+                if t:
+                    parts.append(t)
+            return "\n".join(parts) if parts else None
+        if isinstance(val, dict):
+            if val.get("type") == "text" and "text" in val:
+                return _to_text(val.get("text"))
+            if "content" in val:
+                return _to_text(val.get("content"))
+            if "text" in val:
+                return _to_text(val.get("text"))
+            if "message" in val:
+                return _to_text(val.get("message"))
+            try:
+                return json.dumps(val, ensure_ascii=False)
+            except Exception:
+                return str(val)
+        try:
+            return str(val)
+        except Exception:
+            return None
+
+    text = _to_text(reasoning_content)
+    if not text:
+        return ""
+    return str(text).strip()
+
+
 # -----------------------------
 # Line editing (readline) setup
 # -----------------------------
@@ -412,7 +451,7 @@ class OpenAICompat:
 # -----------------------------
 SYSTEM_PROMPT = """
 # You are a helpful terminal agent.
-  - Use tools (see below). 
+  - Use tools when appropriate.
   - When calling a tool, respond ONLY with a JSON dictionary that matches the function schema.
   - Prefer safe, read-only commands unless explicitly asked.
   - Keep outputs concise and relevant.
@@ -592,6 +631,8 @@ def execute_tool_call(call: Dict[str, Any], opts: argparse.Namespace, colors_on:
 
 def agent_loop(opts: argparse.Namespace) -> None:
     colors_on = not opts.no_color
+    show_reasoning = not getattr(opts, "no_reasoning", False)
+    error_prefix = colorize("assistant > [error] ", Colors.RED, colors_on)
 
     # Initialize OpenAI-compatible client
     # Backward compatibility: --debug enables both llm and tools logs
@@ -675,6 +716,33 @@ def agent_loop(opts: argparse.Namespace) -> None:
     print(colorize("System prompt:", Colors.MAGENTA, colors_on))
     print(colorize(messages[0]["content"], Colors.DIM, colors_on))
 
+    def emit_reasoning(reasoning_value: Any) -> None:
+        if not show_reasoning:
+            return
+        text = reasoning_to_text(reasoning_value)
+        if not text:
+            return
+        prefix = "thinking > "
+        lines = text.splitlines() or [""]
+        print(colorize(prefix + lines[0], Colors.DIM, colors_on))
+        for line in lines[1:]:
+            print(colorize(" " * len(prefix) + line, Colors.DIM, colors_on))
+
+    def pick_choice(resp: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Return the first choice or None after emitting a user-visible error."""
+        choices = resp.get("choices")
+        if not isinstance(choices, list) or not choices:
+            err = resp.get("error") or resp.get("message") or "No choices returned by model."
+            print(error_prefix + str(err))
+            return None
+        if len(choices) > 1 and getattr(opts, "debug_llm", False):
+            print(colorize(f"[debug] multiple choices returned ({len(choices)}); using first", Colors.YELLOW, colors_on))
+        choice = choices[0] or {}
+        if not isinstance(choice, dict):
+            print(error_prefix + "Invalid choice payload from model.")
+            return None
+        return choice
+
     while True:
         try:
             # Use uncolored prompt with libedit to avoid display glitches
@@ -705,24 +773,35 @@ def agent_loop(opts: argparse.Namespace) -> None:
 
         # Handle tool calls loop
         while True:
-            choice = response.get("choices", [{}])[0]
-            message = choice.get("message", {})
+            choice = pick_choice(response)
+            if choice is None:
+                break
+            message = choice.get("message") or {}
+            if not isinstance(message, dict):
+                print(error_prefix + "Invalid message payload from model.")
+                break
             tool_calls = message.get("tool_calls") or []
             # Legacy OpenAI function_call support
             if not tool_calls and message.get("function_call"):
                 tool_calls = [{"id": "func_1", "function": message.get("function_call")}]
 
+            emit_reasoning(message.get("reasoning_content"))
+
             if tool_calls:
+                # Show any assistant text that came with the tool calls
+                if message.get("content"):
+                    print(colorize("assistant > ", Colors.GREEN, colors_on) + str(message.get("content")))
                 # Echo back the assistant message containing tool_calls to satisfy
                 # providers (e.g., Azure) that require the tool response to follow
                 # a preceding assistant message with tool_calls.
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": message.get("content") or "",
-                        "tool_calls": tool_calls,
-                    }
-                )
+                assistant_with_tools: Dict[str, Any] = {
+                    "role": "assistant",
+                    "content": message.get("content") or "",
+                    "tool_calls": tool_calls,
+                }
+                if "reasoning_content" in message:
+                    assistant_with_tools["reasoning_content"] = message.get("reasoning_content")
+                messages.append(assistant_with_tools)
                 for tc in tool_calls:
                     tool_output = execute_tool_call(tc, opts, colors_on, mcp_client, mcp_tools_map)
                     messages.append(
@@ -750,7 +829,10 @@ def agent_loop(opts: argparse.Namespace) -> None:
                 # Final assistant message
                 content = message.get("content", "")
                 print(colorize("assistant > ", Colors.GREEN, colors_on) + content)
-                messages.append({"role": "assistant", "content": content})
+                assistant_final: Dict[str, Any] = {"role": "assistant", "content": content}
+                if "reasoning_content" in message:
+                    assistant_final["reasoning_content"] = message.get("reasoning_content")
+                messages.append(assistant_final)
                 break
 
 
@@ -770,6 +852,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--debug-llm", action="store_true", help="Debug raw LLM traffic (requests/responses)")
     p.add_argument("--debug-tools", action="store_true", help="Debug tool calls and I/O (incl. MCP JSON-RPC)")
     p.add_argument("--no-color", action="store_true", help="Disable ANSI colors in terminal output")
+    p.add_argument("--no-reasoning", action="store_true", help="Hide reasoning_content (thinking traces)")
     p.add_argument("--bash-enabled", action="store_true", help="Enable 'bash' tool. Security Warning!")
     # MCP
     p.add_argument("--mcp-url", default=os.getenv("MCP_URL"), help="MCP server base URL (optional)")

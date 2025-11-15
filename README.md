@@ -19,6 +19,7 @@ This is a playground project developed to understand how agents work, not a prod
 Notes
 - Exit with `exit` or `Ctrl+D`.
 - History is saved to `~/.agent_history`.
+- Thinking traces: models that emit `reasoning_content` will show it in dim gray unless `--no-reasoning` is supplied.
 - Prompt/history behavior:
   - On macOS with libedit, the input prompt is intentionally uncolored to avoid display glitches when navigating history.
   - With GNU readline (e.g., when running via `uv` where `gnureadline` is available), the prompt is colored safely using non-printing markers so arrows/history render correctly.
@@ -38,6 +39,7 @@ Notes
 - `--debug-llm`: show raw LLM traffic (requests/responses)
 - `--debug`: convenience flag enabling both `--debug-tools` and `--debug-llm`
 - `--no-color`: disable colored terminal output
+- `--no-reasoning`: hide thinking traces (`reasoning_content`); shown in dim gray by default
 - `--bash-enabled`: Enable 'bash' tool. Security Warning! Use only n sandboxed environment!
 - `--readfile-bytes <int>`: limit for `readfile` tool output (first N bytes; default 4096)
 
@@ -66,6 +68,7 @@ Notes
   - `[tool] webfetch https://example.com`
   - `[tool] dp_set -> dp-set {"datapoints":[...]}`
   - The arrow indicates a normalized MCP tool name used for dispatch.
+- If an assistant message includes both text and tool calls, the text is printed once (`assistant > ...`) before the tools are executed.
 
 ### Prompting tips
 - To encourage tool calls with correct parameters, ask explicitly (e.g., “Use dp-set with its schema and set SYS:TEST to 1”).

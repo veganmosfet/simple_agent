@@ -378,7 +378,16 @@ class OpenAICompat:
         self._azure_endpoint = azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         self._azure_api_version = azure_api_version or os.getenv("AZURE_OPENAI_API_VERSION") or "2024-08-01-preview"
 
-    def chat(self, model: str, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, tool_choice: str = "auto", temperature: float = 0.2, max_tokens: int = 1024) -> Dict[str, Any]:
+    def chat(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: str = "auto",
+        temperature: float = 0.2,
+        max_tokens: int = 1024,
+        reasoning_effort: Optional[str] = None,
+    ) -> Dict[str, Any]:
         # Lazily initialize client to avoid import errors before first use
         if self.client is None:
             try:
@@ -428,6 +437,9 @@ class OpenAICompat:
             if tools:
                 payload["tools"] = tools
                 payload["tool_choice"] = tool_choice
+            if reasoning_effort:
+                extra_body = payload.setdefault("extra_body", {})
+                extra_body["reasoning"] = {"effort": reasoning_effort}
             if self.debug_llm:
                 print(colorize("[debug] request payload:", Colors.DIM))
                 print(colorize(json.dumps(payload, indent=2), Colors.DIM))
@@ -449,14 +461,20 @@ class OpenAICompat:
 # -----------------------------
 # Agent implementation
 # -----------------------------
+#SYSTEM_PROMPT = """
+# You are a helpful terminal agent.
+#  - Use tools when appropriate.
+#  - When calling a tool, respond ONLY with a JSON dictionary that matches the function schema.
+#  - Prefer safe, read-only commands unless explicitly asked.
+#  - Keep outputs concise and relevant.
+#""".strip()
+
 SYSTEM_PROMPT = """
 # You are a helpful terminal agent.
   - Use tools when appropriate.
-  - When calling a tool, respond ONLY with a JSON dictionary that matches the function schema.
   - Prefer safe, read-only commands unless explicitly asked.
   - Keep outputs concise and relevant.
 """.strip()
-
 
 def build_tools(dynamic_mcp_tools: Optional[List[Dict[str, Any]]] = None, include_bash: bool = True, readfile_bytes: int = 4096) -> List[Dict[str, Any]]:
     tools: List[Dict[str, Any]] = []
@@ -766,6 +784,7 @@ def agent_loop(opts: argparse.Namespace) -> None:
             tool_choice="auto",
             temperature=opts.temperature,
             max_tokens=opts.max_tokens,
+            reasoning_effort=getattr(opts, "reasoning_effort", None),
         )
         if getattr(opts, "debug_llm", False):
             print(colorize("[debug] raw response:", Colors.DIM, colors_on))
@@ -781,10 +800,6 @@ def agent_loop(opts: argparse.Namespace) -> None:
                 print(error_prefix + "Invalid message payload from model.")
                 break
             tool_calls = message.get("tool_calls") or []
-            # Legacy OpenAI function_call support
-            if not tool_calls and message.get("function_call"):
-                tool_calls = [{"id": "func_1", "function": message.get("function_call")}]
-
             emit_reasoning(message.get("reasoning_content"))
 
             if tool_calls:
@@ -799,8 +814,6 @@ def agent_loop(opts: argparse.Namespace) -> None:
                     "content": message.get("content") or "",
                     "tool_calls": tool_calls,
                 }
-                if "reasoning_content" in message:
-                    assistant_with_tools["reasoning_content"] = message.get("reasoning_content")
                 messages.append(assistant_with_tools)
                 for tc in tool_calls:
                     tool_output = execute_tool_call(tc, opts, colors_on, mcp_client, mcp_tools_map)
@@ -820,6 +833,7 @@ def agent_loop(opts: argparse.Namespace) -> None:
                     tool_choice="auto",
                     temperature=opts.temperature,
                     max_tokens=opts.max_tokens,
+                    reasoning_effort=getattr(opts, "reasoning_effort", None),
                 )
                 if getattr(opts, "debug_llm", False):
                     print(colorize("[debug] raw response:", Colors.DIM, colors_on))
@@ -830,8 +844,6 @@ def agent_loop(opts: argparse.Namespace) -> None:
                 content = message.get("content", "")
                 print(colorize("assistant > ", Colors.GREEN, colors_on) + content)
                 assistant_final: Dict[str, Any] = {"role": "assistant", "content": content}
-                if "reasoning_content" in message:
-                    assistant_final["reasoning_content"] = message.get("reasoning_content")
                 messages.append(assistant_final)
                 break
 
@@ -848,6 +860,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--max-tokens", type=int, default=4096, help="Max tokens in responses")
     p.add_argument("--readfile-bytes", type=int, default=4096, help="Number of bytes readfile tool returns from a file")
     p.add_argument("--system-prompt", default=None, help="Custom system prompt")
+    p.add_argument("--reasoning-effort", choices=["low", "medium", "high"], default=os.getenv("REASONING_EFFORT", "medium"), help="Reasoning effort hint sent to the model (default: medium)")
     p.add_argument("--debug", action="store_true", help="Enable both LLM and tool debug logs (convenience)")
     p.add_argument("--debug-llm", action="store_true", help="Debug raw LLM traffic (requests/responses)")
     p.add_argument("--debug-tools", action="store_true", help="Debug tool calls and I/O (incl. MCP JSON-RPC)")

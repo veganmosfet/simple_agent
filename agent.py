@@ -437,7 +437,7 @@ class OpenAICompat:
             if tools:
                 payload["tools"] = tools
                 payload["tool_choice"] = tool_choice
-            if reasoning_effort:
+            if reasoning_effort and not (self._provider == "azure"):
                 extra_body = payload.setdefault("extra_body", {})
                 extra_body["reasoning"] = {"effort": reasoning_effort}
             if self.debug_llm:

@@ -39,6 +39,7 @@ Notes
 - `--debug-llm`: show raw LLM traffic (requests/responses)
 - `--debug`: convenience flag enabling both `--debug-tools` and `--debug-llm`
 - `--no-color`: disable colored terminal output
+- `--reasoning-effort <low|medium|high>`: include `{"reasoning":{"effort":...}}` in chat requests (default `medium`)
 - `--no-reasoning`: hide thinking traces (`reasoning_content`); shown in dim gray by default
 - `--bash-enabled`: Enable 'bash' tool. Security Warning! Use only n sandboxed environment!
 - `--readfile-bytes <int>`: limit for `readfile` tool output (first N bytes; default 4096)

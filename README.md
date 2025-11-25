@@ -43,6 +43,7 @@ Notes
 - `--no-reasoning`: hide thinking traces (`reasoning_content`); shown in dim gray by default
 - `--bash-enabled`: Enable 'bash' tool. Security Warning! Use only n sandboxed environment!
 - `--readfile-bytes <int>`: limit for `readfile` tool output (first N bytes; default 4096)
+- `--insecure`: disable TLS certificate verification for `webfetch` (UNSAFE; accepts self-signed certs)
 
 ### Native Tools (exposed to the model)
 - `bash({ command })`
@@ -52,7 +53,7 @@ Notes
   - **WARNING** Use only in sandboxed environment!
 - `webfetch({ url })`
   - Fetches the URL and returns plain text extracted from HTML
-  - Defaults: `user_agent="Mozilla/5.0 (Agent)", timeout=30s`
+  - Defaults: `user_agent="Mozilla/5.0 (Agent)", timeout=30s`, TLS verification ON (use `--insecure` to allow self-signed certs)
 - `readfile({ filename })`
   - Reads the first `N` bytes (set via `--readfile-bytes`) of a file in the current working directory
   - Returns `{ filename, bytes_read, content }`

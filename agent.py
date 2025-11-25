@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from html.parser import HTMLParser
 import atexit
-
+import ssl 
 
 # -----------------------------
 # Simple terminal color helpers
@@ -225,11 +225,21 @@ def tool_bash(command: str, timeout: int = 30, cwd: Optional[str] = None) -> Dic
         }
 
 
-def tool_webfetch(url: str, user_agent: str = "Mozilla/5.0 (Agent)", timeout: int = 30) -> Dict[str, Any]:
-    """Fetch URL and return plain text extracted from HTML."""
+def tool_webfetch(
+    url: str,
+    user_agent: str = "Mozilla/5.0 (Agent)",
+    timeout: int = 30,
+    allow_self_signed: bool = False,
+) -> Dict[str, Any]:
+    """Fetch URL and return plain text extracted from HTML.
+       Optionally allow self-signed certificates (UNSAFE, for testing only)."""
     try:
         req = Request(url, headers={"User-Agent": user_agent})
-        with urlopen(req, timeout=timeout) as resp:
+        # Create SSL context
+        context = None
+        if url.lower().startswith("https") and allow_self_signed:
+            context = ssl._create_unverified_context()
+        with urlopen(req, timeout=timeout, context=context) as resp:
             charset = resp.headers.get_content_charset() or "utf-8"
             data = resp.read().decode(charset, errors="replace")
             text = html_to_text(data)
@@ -243,7 +253,7 @@ def tool_webfetch(url: str, user_agent: str = "Mozilla/5.0 (Agent)", timeout: in
         return {"status": -1, "text": f"Network error: {e}"}
     except Exception as e:
         return {"status": -1, "text": f"Tool error: {e}"}
-
+    
 
 def tool_readfile(filename: str, max_bytes: int, base_dir: Optional[str] = None) -> Dict[str, Any]:
     """Read the first max_bytes of a text file located in base_dir (current directory)."""
@@ -622,6 +632,7 @@ def execute_tool_call(call: Dict[str, Any], opts: argparse.Namespace, colors_on:
             url=args.get("url", ""),
             user_agent=args.get("user_agent", "Mozilla/5.0 (Agent)"),
             timeout=int(args.get("timeout", 30)),
+            allow_self_signed=bool(getattr(opts, "insecure", False)),
         )
     elif dispatch_name == "readfile":
         result = tool_readfile(
@@ -866,6 +877,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--debug-tools", action="store_true", help="Debug tool calls and I/O (incl. MCP JSON-RPC)")
     p.add_argument("--no-color", action="store_true", help="Disable ANSI colors in terminal output")
     p.add_argument("--no-reasoning", action="store_true", help="Hide reasoning_content (thinking traces)")
+    p.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification for webfetch (UNSAFE)")
     p.add_argument("--bash-enabled", action="store_true", help="Enable 'bash' tool. Security Warning!")
     # MCP
     p.add_argument("--mcp-url", default=os.getenv("MCP_URL"), help="MCP server base URL (optional)")

@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import signal
 import threading
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Union
 
@@ -108,7 +110,7 @@ def build_default_store() -> DataPointStore:
         "SYS:PUMP01.RUN": ("bool", False),
         "SYS:PUMP01.FLOW": ("float", 12.4),
         "SYS:TANK01.LEVEL": ("float", 55.0),
-        "SYS:LINE01.ALARM": ("bool", True),
+        "SYS:LINE01.ALARM": ("bool", False),
     }
     return DataPointStore(initial)
 
@@ -195,11 +197,49 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def run_server(server: FastMCP, transport: str, mount_path: str) -> None:
+async def run_server(server: FastMCP, transport: str, mount_path: str, shutdown_timeout: float = 1.0) -> None:
+    """Run the server with Ctrl+C handling that cleanly exits uvicorn."""
+    import uvicorn
+
     if transport == "streamable-http":
-        await server.run_streamable_http_async()
-        return
-    await server.run_sse_async(mount_path=mount_path)
+        app = server.streamable_http_app()
+    else:
+        app = server.sse_app(mount_path=mount_path)
+
+    config = uvicorn.Config(
+        app,
+        host=server.settings.host,
+        port=server.settings.port,
+        log_level=server.settings.log_level.lower(),
+        timeout_graceful_shutdown=shutdown_timeout,
+    )
+    uvicorn_server = uvicorn.Server(config)
+
+    loop = asyncio.get_running_loop()
+    interrupt_count = 0
+
+    def handle_signal() -> None:
+        nonlocal interrupt_count
+        interrupt_count += 1
+        if interrupt_count == 1:
+            logging.info("Ctrl+C received, shutting down...")
+            uvicorn_server.should_exit = True
+        else:
+            logging.warning("Second interrupt received, forcing exit.")
+            uvicorn_server.force_exit = True
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, handle_signal)
+        except NotImplementedError:
+            signal.signal(sig, lambda *_: handle_signal())
+
+    try:
+        await uvicorn_server.serve()
+    finally:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with suppress(Exception):
+                loop.remove_signal_handler(sig)
 
 
 def main() -> None:
@@ -218,7 +258,7 @@ def main() -> None:
     )
     try:
         asyncio.run(run_server(server, args.transport, args.mount_path))
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         logging.info("Server stopped by user.")
 
 

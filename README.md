@@ -34,6 +34,8 @@ Notes
 - `--azure-api-version <version>`: Azure OpenAI API version (default `2024-08-01-preview`)
 - `--mcp-url <url>`: MCP JSON‑RPC endpoint (optional)
 - `--mcp-token <token>`: Bearer token for MCP (optional)
+- `--mcp-ca-bundle <path>`: Custom CA bundle for MCP HTTPS (use when your cert isn’t in Python’s trust store)
+- `--mcp-insecure`: Skip MCP TLS verification (UNSAFE; for testing self-signed certs)
 - `--system-prompt <text>`: override system prompt (optional)
 - `--debug-tools`: show tool calls and I/O (incl. MCP JSON‑RPC)
 - `--debug-llm`: show raw LLM traffic (requests/responses)

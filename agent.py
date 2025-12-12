@@ -4,12 +4,14 @@ import json
 import os
 import sys
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from html.parser import HTMLParser
 import atexit
 import ssl 
+
+from mcp.types import DEFAULT_NEGOTIATED_VERSION  # type: ignore
 
 # -----------------------------
 # Simple terminal color helpers
@@ -290,54 +292,67 @@ def tool_readfile(filename: str, max_bytes: int, base_dir: Optional[str] = None)
 # MCP over HTTP (JSON-RPC 2.0)
 # -----------------------------
 class MCPHttpClient:
-    def __init__(self, base_url: str, token: Optional[str] = None, timeout: int = 30, debug_tools: bool = False, colors_on: bool = True):
+    def __init__(self, base_url: str, token: Optional[str] = None, timeout: int = 30, debug_tools: bool = False, colors_on: bool = True, client_name: str = "simple-agent", client_version: str = "0.1.0"):
         self.base_url = base_url.rstrip('/')
         self.token = token
         self.timeout = timeout
         self.debug_tools = debug_tools
         self.colors_on = colors_on
         self._id = 0
+        self.session_id: Optional[str] = None
+        self.protocol_version: str = DEFAULT_NEGOTIATED_VERSION
+        self.client_name = client_name
+        self.client_version = client_version
 
     def _headers(self) -> Dict[str, str]:
-        h = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+        h = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "mcp-protocol-version": self.protocol_version,
+        }
         if self.token:
             h["Authorization"] = f"Bearer {self.token}"
+        if self.session_id:
+            h["mcp-session-id"] = self.session_id
         return h
 
-    def call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        self._id += 1
-        payload = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or {}}
+    def _send_request(self, payload: Dict[str, Any], include_session: bool = True) -> Tuple[Dict[str, Any], Dict[str, str]]:
         data_bytes = json.dumps(payload).encode("utf-8")
+        headers = self._headers() if include_session else {k: v for k, v in self._headers().items() if k != "mcp-session-id"}
+
         if self.debug_tools:
-            print(colorize(f"[debug] MCP -> {method}", Colors.YELLOW, self.colors_on))
+            print(colorize(f"[debug] MCP -> {payload.get('method')}", Colors.YELLOW, self.colors_on))
             print(colorize(json.dumps(payload, indent=2), Colors.DIM, self.colors_on))
+
         try:
-            req = Request(self.base_url, headers=self._headers(), data=data_bytes, method="POST")
+            req = Request(self.base_url, headers=headers, data=data_bytes, method="POST")
             with urlopen(req, timeout=self.timeout) as resp:
                 content_type = resp.headers.get("Content-Type", "")
                 charset = resp.headers.get_content_charset() or "utf-8"
-                raw = resp.read().decode(charset, errors="replace")
-                data: Dict[str, Any]
-                if "text/event-stream" in content_type or raw.startswith("event:"):
-                    # Parse SSE: collect 'data:' lines and join
+                raw_body = resp.read().decode(charset, errors="replace")
+                resp_headers = {k.lower(): v for k, v in resp.headers.items()}
+
+                if "text/event-stream" in content_type or raw_body.startswith("event:"):
                     data_lines: List[str] = []
-                    for line in raw.splitlines():
+                    for line in raw_body.splitlines():
                         if line.startswith("data: "):
                             data_lines.append(line[len("data: "):])
                     sse_payload = "\n".join(data_lines).strip()
                     try:
-                        data = json.loads(sse_payload) if sse_payload else {"raw": raw}
+                        data = json.loads(sse_payload) if sse_payload else {"raw": raw_body}
                     except Exception:
-                        data = {"raw": raw}
+                        data = {"raw": raw_body}
                 else:
                     try:
-                        data = json.loads(raw)
+                        data = json.loads(raw_body)
                     except Exception:
-                        data = {"raw": raw}
+                        data = {"raw": raw_body}
+
                 if self.debug_tools:
                     print(colorize("[debug] MCP <- response", Colors.YELLOW, self.colors_on))
                     print(colorize(json.dumps(data, indent=2), Colors.DIM, self.colors_on))
-                return data
+
+                return data, resp_headers
         except HTTPError as e:
             body = None
             try:
@@ -345,11 +360,64 @@ class MCPHttpClient:
                 body = body_bytes.decode("utf-8", errors="replace") if body_bytes else None
             except Exception:
                 body = None
-            return {"error": {"code": e.code, "message": str(e), "body": body}}
+            hdrs = {}
+            try:
+                hdrs = {k.lower(): v for k, v in (e.headers.items() if e.headers else [])}
+            except Exception:
+                hdrs = {}
+            return {"error": {"code": e.code, "message": str(e), "body": body}}, hdrs
         except URLError as e:
-            return {"error": {"code": -1, "message": str(e)}}
+            return {"error": {"code": -1, "message": str(e)}}, {}
         except Exception as e:
-            return {"error": {"code": -1, "message": str(e)}}
+            return {"error": {"code": -1, "message": str(e)}}, {}
+
+    def _update_session_from_headers(self, headers: Dict[str, str]) -> None:
+        sid = headers.get("mcp-session-id")
+        if sid and sid != self.session_id:
+            self.session_id = sid
+            if self.debug_tools:
+                print(colorize(f"[debug] MCP session established: {sid}", Colors.GREEN, self.colors_on))
+
+    def initialize(self) -> Dict[str, Any]:
+        """Perform MCP initialize to obtain a session ID."""
+        if self.session_id:
+            return {"session_id": self.session_id, "status": "already-initialized"}
+
+        self._id += 1
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": self.protocol_version,
+                "capabilities": {
+                    "experimental": {},
+                    "sampling": {},
+                    "elicitation": {},
+                    "roots": {},
+                },
+                "clientInfo": {
+                    "name": self.client_name,
+                    "version": self.client_version,
+                },
+            },
+        }
+
+        data, headers = self._send_request(payload, include_session=False)
+        self._update_session_from_headers(headers)
+        return data
+
+    def call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if method != "initialize" and not self.session_id:
+            init_resp = self.initialize()
+            if "error" in init_resp:
+                return init_resp
+
+        self._id += 1
+        payload = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or {}}
+        data, headers = self._send_request(payload)
+        self._update_session_from_headers(headers)
+        return data
 
 
 def tool_mcp_list_tools_http(client: MCPHttpClient) -> Dict[str, Any]:
@@ -394,6 +462,7 @@ class OpenAICompat:
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: str = "auto",
+#        tool_choice: str = "required",
         temperature: float = 0.2,
         max_tokens: int = 1024,
         reasoning_effort: Optional[str] = None,
@@ -793,6 +862,7 @@ def agent_loop(opts: argparse.Namespace) -> None:
             messages=messages,
             tools=tools,
             tool_choice="auto",
+#             tool_choice="required",
             temperature=opts.temperature,
             max_tokens=opts.max_tokens,
             reasoning_effort=getattr(opts, "reasoning_effort", None),
@@ -842,6 +912,7 @@ def agent_loop(opts: argparse.Namespace) -> None:
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",
+#                    tool_choice="required",
                     temperature=opts.temperature,
                     max_tokens=opts.max_tokens,
                     reasoning_effort=getattr(opts, "reasoning_effort", None),

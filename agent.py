@@ -288,13 +288,37 @@ def tool_readfile(filename: str, max_bytes: int, base_dir: Optional[str] = None)
     return {"filename": filename, "bytes_read": len(data), "content": text}
 
 
+def load_mcp_config(path: str) -> Tuple[Dict[str, str], Dict[str, Any]]:
+    """Load MCP config JSON with optional 'headers' and 'extra_params' keys."""
+    with open(path, "r", encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    if not isinstance(cfg, dict):
+        raise ValueError("MCP config must be a JSON object")
+    headers = cfg.get("headers") or {}
+    extra_params = cfg.get("extra_params") or cfg.get("content") or {}
+    if headers is None:
+        headers = {}
+    if extra_params is None:
+        extra_params = {}
+    if not isinstance(headers, dict):
+        raise ValueError("'headers' must be an object")
+    if not isinstance(extra_params, dict):
+        raise ValueError("'extra_params' must be an object")
+    # Ensure all header values are strings for HTTP
+    normalized_headers: Dict[str, str] = {}
+    for k, v in headers.items():
+        if v is None:
+            continue
+        normalized_headers[str(k)] = str(v)
+    return normalized_headers, extra_params
+
+
 # -----------------------------
 # MCP over HTTP (JSON-RPC 2.0)
 # -----------------------------
 class MCPHttpClient:
-    def __init__(self, base_url: str, token: Optional[str] = None, timeout: int = 30, debug_tools: bool = False, colors_on: bool = True, client_name: str = "simple-agent", client_version: str = "0.1.0", insecure: bool = False, ca_bundle: Optional[str] = None):
+    def __init__(self, base_url: str, timeout: int = 30, debug_tools: bool = False, colors_on: bool = True, client_name: str = "simple-agent", client_version: str = "0.1.0", insecure: bool = False, ca_bundle: Optional[str] = None, extra_headers: Optional[Dict[str, str]] = None, extra_params: Optional[Dict[str, Any]] = None):
         self.base_url = base_url.rstrip('/')
-        self.token = token
         self.timeout = timeout
         self.debug_tools = debug_tools
         self.colors_on = colors_on
@@ -303,6 +327,8 @@ class MCPHttpClient:
         self.protocol_version: str = DEFAULT_NEGOTIATED_VERSION
         self.client_name = client_name
         self.client_version = client_version
+        self.extra_headers = extra_headers or {}
+        self.extra_params = extra_params or {}
         # TLS handling: allow optional custom CA bundle or insecure mode for self-signed certs
         self.ssl_context: Optional[ssl.SSLContext] = None
         if self.base_url.lower().startswith("https"):
@@ -317,10 +343,10 @@ class MCPHttpClient:
             "Content-Type": "application/json",
             "mcp-protocol-version": self.protocol_version,
         }
-        if self.token:
-            h["Authorization"] = f"Bearer {self.token}"
         if self.session_id:
             h["mcp-session-id"] = self.session_id
+        # User-supplied headers override defaults when keys collide
+        h.update(self.extra_headers)
         return h
 
     def _send_request(self, payload: Dict[str, Any], include_session: bool = True) -> Tuple[Dict[str, Any], Dict[str, str]]:
@@ -409,6 +435,13 @@ class MCPHttpClient:
                 },
             },
         }
+        if isinstance(self.extra_params, dict) and self.extra_params:
+            try:
+                params = payload.get("params") or {}
+                if isinstance(params, dict):
+                    payload["params"] = {**self.extra_params, **params}
+            except Exception:
+                pass
 
         data, headers = self._send_request(payload, include_session=False)
         self._update_session_from_headers(headers)
@@ -421,7 +454,10 @@ class MCPHttpClient:
                 return init_resp
 
         self._id += 1
-        payload = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or {}}
+        payload_params: Dict[str, Any] = params or {}
+        if isinstance(self.extra_params, dict) and self.extra_params and isinstance(payload_params, dict):
+            payload_params = {**self.extra_params, **payload_params}
+        payload = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": payload_params}
         data, headers = self._send_request(payload)
         self._update_session_from_headers(headers)
         return data
@@ -708,7 +744,7 @@ def execute_tool_call(call: Dict[str, Any], opts: argparse.Namespace, colors_on:
             url=args.get("url", ""),
             user_agent=args.get("user_agent", "Mozilla/5.0 (Agent)"),
             timeout=int(args.get("timeout", 30)),
-            allow_self_signed=bool(getattr(opts, "insecure", False)),
+            allow_self_signed=bool(getattr(opts, "webfetch_insecure", False)),
         )
     elif dispatch_name == "readfile":
         result = tool_readfile(
@@ -759,13 +795,22 @@ def agent_loop(opts: argparse.Namespace) -> None:
     mcp_tools_map: Dict[str, Dict[str, Any]] = {}
     dynamic_mcp_tools: List[Dict[str, Any]] = []
     if opts.mcp_url:
+        mcp_headers: Dict[str, str] = {}
+        mcp_extra_params: Dict[str, Any] = {}
+        if getattr(opts, "mcp_config", None):
+            try:
+                mcp_headers, mcp_extra_params = load_mcp_config(opts.mcp_config)
+            except Exception as e:
+                print(error_prefix + f"Failed to load MCP config '{opts.mcp_config}': {e}")
+                return
         mcp_client = MCPHttpClient(
             opts.mcp_url,
-            opts.mcp_token,
             debug_tools=getattr(opts, "debug_tools", False),
             colors_on=colors_on,
             insecure=getattr(opts, "mcp_insecure", False),
             ca_bundle=getattr(opts, "mcp_ca_bundle", None),
+            extra_headers=mcp_headers,
+            extra_params=mcp_extra_params,
         )
         mcp_resp = tool_mcp_list_tools_http(mcp_client)
         # Expect JSON-RPC with 'result', but handle direct 'tools' for flexibility
@@ -962,11 +1007,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--debug-tools", action="store_true", help="Debug tool calls and I/O (incl. MCP JSON-RPC)")
     p.add_argument("--no-color", action="store_true", help="Disable ANSI colors in terminal output")
     p.add_argument("--no-reasoning", action="store_true", help="Hide reasoning_content (thinking traces)")
-    p.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification for webfetch (UNSAFE)")
+    p.add_argument("--webfetch-insecure", action="store_true", help="Disable TLS certificate verification for webfetch (UNSAFE)")
     p.add_argument("--bash-enabled", action="store_true", help="Enable 'bash' tool. Security Warning!")
     # MCP
     p.add_argument("--mcp-url", default=os.getenv("MCP_URL"), help="MCP server base URL (optional)")
-    p.add_argument("--mcp-token", default=os.getenv("MCP_TOKEN"), help="Bearer token for MCP server (optional)")
+    p.add_argument("--mcp-config", default=os.getenv("MCP_CONFIG"), help="Path to MCP config JSON file (headers/extra_params)")
     p.add_argument("--mcp-insecure", action="store_true", help="Disable TLS certificate verification for MCP HTTPS (UNSAFE)")
     p.add_argument("--mcp-ca-bundle", default=os.getenv("MCP_CA_BUNDLE"), help="Path to CA bundle for MCP HTTPS (optional)")
     return p.parse_args(argv)

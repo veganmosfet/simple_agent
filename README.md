@@ -14,7 +14,7 @@ This is a playground project developed to understand how agents work, not a prod
   - `uv run agent.py --model-provider azure --model <deployment_name> --azure-endpoint https://<resource>.openai.azure.com --azure-api-version 2024-08-01-preview --api-key $AZURE_OPENAI_API_KEY`
 
 - With MCP tools:
-  - `uv run agent.py --model <model> --api-base <url> --mcp-url http://127.0.0.1:3000/mcp --mcp-token TOKEN`
+  - `uv run agent.py --model <model> --api-base <url> --mcp-url http://127.0.0.1:3000/mcp --mcp-config mcp-config.json`
 
 Notes
 - Exit with `exit` or `Ctrl+D`.
@@ -33,7 +33,7 @@ Notes
 - `--azure-endpoint <url>`: Azure OpenAI endpoint, e.g., `https://<resource>.openai.azure.com`
 - `--azure-api-version <version>`: Azure OpenAI API version (default `2024-08-01-preview`)
 - `--mcp-url <url>`: MCP JSON‑RPC endpoint (optional)
-- `--mcp-token <token>`: Bearer token for MCP (optional)
+- `--mcp-config <path>`: JSON file with MCP headers/extra params (see below)
 - `--mcp-ca-bundle <path>`: Custom CA bundle for MCP HTTPS (use when your cert isn’t in Python’s trust store)
 - `--mcp-insecure`: Skip MCP TLS verification (UNSAFE; for testing self-signed certs)
 - `--system-prompt <text>`: override system prompt (optional)
@@ -45,7 +45,7 @@ Notes
 - `--no-reasoning`: hide thinking traces (`reasoning_content`); shown in dim gray by default
 - `--bash-enabled`: Enable 'bash' tool. Security Warning! Use only n sandboxed environment!
 - `--readfile-bytes <int>`: limit for `readfile` tool output (first N bytes; default 4096)
-- `--insecure`: disable TLS certificate verification for `webfetch` (UNSAFE; accepts self-signed certs)
+- `--webfetch-insecure`: disable TLS certificate verification for `webfetch` (UNSAFE; accepts self-signed certs)
 
 ### Native Tools (exposed to the model)
 - `bash({ command })`
@@ -65,6 +65,23 @@ Notes
 - When the model calls one of these tools, the agent POSTs `tools/call` with `{ name, arguments }` and returns the server’s result.
 - Accept headers: `application/json, text/event-stream` to support servers that stream JSON‑RPC via SSE.
 - Name normalization: the agent tolerates underscore/hyphen and case variations when matching tool names (e.g., `dp_set` maps to `dp-set`).
+
+#### MCP config file (headers & extra params)
+- Point the agent to a JSON file with `--mcp-config mcp-config.json` (or env `MCP_CONFIG`).
+- Format:
+  ```json
+  {
+    "headers": {
+      "Authorization": "Bearer TOKEN",
+      "X-Env": "demo"
+    },
+    "extra_params": {
+      "context": { "site": "plant-1" }
+    }
+  }
+  ```
+- `headers` are merged into every MCP HTTP request (override defaults if keys clash).
+- `extra_params` are merged into every JSON-RPC `params` object (per-call params override the same keys).
 
 ### Tool call logging
 - Every tool call prints a concise, single-line message (regardless of debug flags), e.g.:

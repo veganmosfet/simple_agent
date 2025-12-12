@@ -292,7 +292,7 @@ def tool_readfile(filename: str, max_bytes: int, base_dir: Optional[str] = None)
 # MCP over HTTP (JSON-RPC 2.0)
 # -----------------------------
 class MCPHttpClient:
-    def __init__(self, base_url: str, token: Optional[str] = None, timeout: int = 30, debug_tools: bool = False, colors_on: bool = True, client_name: str = "simple-agent", client_version: str = "0.1.0"):
+    def __init__(self, base_url: str, token: Optional[str] = None, timeout: int = 30, debug_tools: bool = False, colors_on: bool = True, client_name: str = "simple-agent", client_version: str = "0.1.0", insecure: bool = False, ca_bundle: Optional[str] = None):
         self.base_url = base_url.rstrip('/')
         self.token = token
         self.timeout = timeout
@@ -303,6 +303,13 @@ class MCPHttpClient:
         self.protocol_version: str = DEFAULT_NEGOTIATED_VERSION
         self.client_name = client_name
         self.client_version = client_version
+        # TLS handling: allow optional custom CA bundle or insecure mode for self-signed certs
+        self.ssl_context: Optional[ssl.SSLContext] = None
+        if self.base_url.lower().startswith("https"):
+            if insecure:
+                self.ssl_context = ssl._create_unverified_context()
+            elif ca_bundle:
+                self.ssl_context = ssl.create_default_context(cafile=ca_bundle)
 
     def _headers(self) -> Dict[str, str]:
         h = {
@@ -326,7 +333,7 @@ class MCPHttpClient:
 
         try:
             req = Request(self.base_url, headers=headers, data=data_bytes, method="POST")
-            with urlopen(req, timeout=self.timeout) as resp:
+            with urlopen(req, timeout=self.timeout, context=self.ssl_context) as resp:
                 content_type = resp.headers.get("Content-Type", "")
                 charset = resp.headers.get_content_charset() or "utf-8"
                 raw_body = resp.read().decode(charset, errors="replace")
@@ -752,7 +759,14 @@ def agent_loop(opts: argparse.Namespace) -> None:
     mcp_tools_map: Dict[str, Dict[str, Any]] = {}
     dynamic_mcp_tools: List[Dict[str, Any]] = []
     if opts.mcp_url:
-        mcp_client = MCPHttpClient(opts.mcp_url, opts.mcp_token, debug_tools=getattr(opts, "debug_tools", False), colors_on=colors_on)
+        mcp_client = MCPHttpClient(
+            opts.mcp_url,
+            opts.mcp_token,
+            debug_tools=getattr(opts, "debug_tools", False),
+            colors_on=colors_on,
+            insecure=getattr(opts, "mcp_insecure", False),
+            ca_bundle=getattr(opts, "mcp_ca_bundle", None),
+        )
         mcp_resp = tool_mcp_list_tools_http(mcp_client)
         # Expect JSON-RPC with 'result', but handle direct 'tools' for flexibility
         tools_obj = None
@@ -953,6 +967,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     # MCP
     p.add_argument("--mcp-url", default=os.getenv("MCP_URL"), help="MCP server base URL (optional)")
     p.add_argument("--mcp-token", default=os.getenv("MCP_TOKEN"), help="Bearer token for MCP server (optional)")
+    p.add_argument("--mcp-insecure", action="store_true", help="Disable TLS certificate verification for MCP HTTPS (UNSAFE)")
+    p.add_argument("--mcp-ca-bundle", default=os.getenv("MCP_CA_BUNDLE"), help="Path to CA bundle for MCP HTTPS (optional)")
     return p.parse_args(argv)
 
 

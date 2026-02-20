@@ -482,7 +482,6 @@ class OpenAICompat:
         debug_llm: bool = False,
         provider: str = "openai",
         azure_endpoint: Optional[str] = None,
-        azure_api_version: Optional[str] = None,
     ):
         self.debug_llm = debug_llm
         self.mode = None  # "v1" (new client)
@@ -492,12 +491,33 @@ class OpenAICompat:
         self._api_key = (
             api_key
             or (os.getenv("AZURE_OPENAI_API_KEY") if provider == "azure" else None)
+            or (os.getenv("AZURE_API_KEY") if provider == "azure" else None)
             or os.getenv("OPENAI_API_KEY")
             or ''
         )
         self._provider = provider
         self._azure_endpoint = azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
-        self._azure_api_version = azure_api_version or os.getenv("AZURE_OPENAI_API_VERSION") or "2024-08-01-preview"
+
+    @staticmethod
+    def _normalize_azure_base_url(endpoint: str) -> str:
+        u = (endpoint or "").strip()
+        if not u:
+            return u
+        v = u.rstrip("/")
+        lower = v.lower()
+
+        # Accept endpoint, /openai, /openai/v1, or full chat completion URL.
+        for suffix in ("/openai/v1/chat/completions", "/openai/chat/completions", "/chat/completions"):
+            if lower.endswith(suffix):
+                v = v[: -len(suffix)]
+                lower = v.lower()
+                break
+
+        if lower.endswith("/openai/v1"):
+            return v
+        if lower.endswith("/openai"):
+            return f"{v}/v1"
+        return f"{v}/openai/v1"
 
     def chat(
         self,
@@ -514,23 +534,13 @@ class OpenAICompat:
         if self.client is None:
             try:
                 if self._provider == "azure":
-                    # Prefer AzureOpenAI client to set correct headers and endpoint handling
-                    from openai import AzureOpenAI  # type: ignore
+                    # Azure OpenAI v1 API is OpenAI-compatible at /openai/v1.
+                    from openai import OpenAI  # type: ignore
                     if not self._azure_endpoint:
                         raise RuntimeError("Azure endpoint is required. Provide --azure-endpoint or AZURE_OPENAI_ENDPOINT.")
-                    def _normalize_azure_endpoint(u: str) -> str:
-                        u = (u or "").strip()
-                        if not u:
-                            return u
-                        # Remove trailing '/openai' if present; SDK adds its own paths
-                        v = u.rstrip('/')
-                        if v.endswith('/openai'):
-                            v = v[:-len('/openai')]
-                        return v
-                    self.client = AzureOpenAI(
+                    self.client = OpenAI(
                         api_key=self._api_key,
-                        api_version=self._azure_api_version,
-                        azure_endpoint=_normalize_azure_endpoint(self._azure_endpoint),
+                        base_url=self._normalize_azure_base_url(self._azure_endpoint),
                     )
                 else:
                     from openai import OpenAI  # type: ignore
@@ -571,7 +581,7 @@ class OpenAICompat:
                 msg = str(e)
                 if self._provider == "azure" and ("Resource not found" in msg or "404" in msg):
                     raise RuntimeError(
-                        "Azure OpenAI: Resource not found. Verify endpoint (omit trailing /openai), API version, and that --model matches your deployment name."
+                        "Azure OpenAI: Resource not found. Verify --azure-endpoint and that --model matches your deployment name/model for the Azure OpenAI v1 API."
                     ) from e
                 raise
             # Convert to a dict for uniform downstream handling
@@ -787,7 +797,6 @@ def agent_loop(opts: argparse.Namespace) -> None:
         debug_llm=getattr(opts, "debug_llm", False),
         provider=getattr(opts, "model_provider", "openai"),
         azure_endpoint=getattr(opts, "azure_endpoint", None),
-        azure_api_version=getattr(opts, "azure_api_version", None),
     )
 
     # Optional MCP initialization: fetch tool list and convert to model tools
@@ -993,10 +1002,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Simple LLM agent with tools and optional MCP stubs.")
     p.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), help="Model name or Azure deployment name")
     p.add_argument("--api-base", default=os.getenv("OPENAI_BASE_URL"), help="OpenAI-compatible API base URL (non-Azure)")
-    p.add_argument("--api-key", default=os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY"), help="API key (OpenAI or Azure)")
+    p.add_argument("--api-key", default=os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("AZURE_API_KEY"), help="API key (OpenAI or Azure)")
     p.add_argument("--model-provider", choices=["openai", "azure"], default=os.getenv("MODEL_PROVIDER", "openai"), help="Model provider: openai or azure")
     p.add_argument("--azure-endpoint", default=os.getenv("AZURE_OPENAI_ENDPOINT"), help="Azure OpenAI endpoint, e.g. https://<resource>.openai.azure.com")
-    p.add_argument("--azure-api-version", default=os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"), help="Azure OpenAI API version")
     p.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
     p.add_argument("--max-tokens", type=int, default=4096, help="Max tokens in responses")
     p.add_argument("--readfile-bytes", type=int, default=4096, help="Number of bytes readfile tool returns from a file")

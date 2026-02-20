@@ -10,8 +10,8 @@ This is a playground project developed to understand how agents work, not a prod
 - OpenAI-compatible Endpoint:
   - `uv run agent.py --model mlx-community/Qwen3-4B-Instruct-2507-4bit --api-base http://127.0.0.1:8080/v1 --api-key XXX`
     
-- Azure OpenAI (API key):
-  - `uv run agent.py --model-provider azure --model <deployment_name> --azure-endpoint https://<resource>.openai.azure.com --azure-api-version 2024-08-01-preview --api-key $AZURE_OPENAI_API_KEY`
+- Azure OpenAI v1 (API key):
+  - `uv run agent.py --model-provider azure --model <deployment_or_model_name> --azure-endpoint https://<resource>.openai.azure.com --api-key $AZURE_API_KEY`
 
 - With MCP tools:
   - `uv run agent.py --model <model> --api-base <url> --mcp-url http://127.0.0.1:3000/mcp --mcp-config mcp-config.json`
@@ -28,10 +28,9 @@ Notes
 ### Flags
 - `--model <name>`: model identifier or Azure deployment name
 - `--api-base <url>`: base URL for OpenAI-compatible APIs (non-Azure)
-- `--api-key <key>`: API key for OpenAI or Azure
+- `--api-key <key>`: API key for OpenAI or Azure (`OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY`, or `AZURE_API_KEY`)
 - `--model-provider <openai|azure>`: select provider (`openai` default)
-- `--azure-endpoint <url>`: Azure OpenAI endpoint, e.g., `https://<resource>.openai.azure.com`
-- `--azure-api-version <version>`: Azure OpenAI API version (default `2024-08-01-preview`)
+- `--azure-endpoint <url>`: Azure OpenAI endpoint, e.g., `https://<resource>.openai.azure.com` (agent uses `/openai/v1`)
 - `--mcp-url <url>`: MCP JSON‑RPC endpoint (optional)
 - `--mcp-config <path>`: JSON file with MCP headers/extra params (see below)
 - `--mcp-ca-bundle <path>`: Custom CA bundle for MCP HTTPS (use when your cert isn’t in Python’s trust store)
